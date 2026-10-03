@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Assert every loader config in the bundle names a loader the bundle contains.
+#
+# glycin finds its loaders through <data-dir>/glycin-loaders/2+/conf.d/*.conf, and each
+# file's Exec= is an absolute path compiled in from --prefix and --libexecdir. A build made
+# with another prefix ships configs that point at the builder's tree and decode nothing.
+# So: for each config, Exec must sit under the install directory, and the file it names,
+# looked up inside the bundle, must be an executable.
+#
+#   scripts/check-loader-paths build/glycin/stage/usr/lib/amber-glycin /usr/lib/amber-glycin
+set -uo pipefail
+
+BUNDLE=${1:?usage: check-loader-paths <bundle-dir> <install-dir>}
+INSTALL=${2:?usage: check-loader-paths <bundle-dir> <install-dir>}
+CONFS="$BUNDLE/share/glycin-loaders/2+/conf.d"
+
+[ -d "$CONFS" ] || { echo "check-loader-paths: no loader configs at $CONFS" >&2; exit 1; }
+
+fail=0
+n=0
+for conf in "$CONFS"/*.conf; do
+	[ -e "$conf" ] || { echo "check-loader-paths: no .conf files in $CONFS" >&2; exit 1; }
+	n=$((n + 1))
+	exec_path=$(sed -n 's/^Exec *= *//p' "$conf" | head -1)
+	case "$exec_path" in
+	"$INSTALL"/*) ;;
+	*)
+		echo "LOADER PATH — ${conf##*/}: Exec=$exec_path is not under $INSTALL"
+		fail=1
+		continue
+		;;
+	esac
+	if [ ! -x "$BUNDLE${exec_path#"$INSTALL"}" ]; then
+		echo "LOADER MISSING — ${conf##*/}: Exec=$exec_path is not in the bundle"
+		fail=1
+	fi
+done
+
+[ "$fail" -eq 0 ] || exit 1
+echo "loader-paths OK — $n config(s), each names a loader under $INSTALL that the bundle contains"

@@ -1,0 +1,18 @@
+# libglycin-gtk4's RUNPATH names the amber-gtk4 bundle on purpose (patches/0001), so it
+# loads the bundled GTK 4.16 and not the distro's older one whenever amber-gtk4 is
+# installed. $ORIGIN beside it finds libglycin-2.
+amber-glycin: custom-library-search-path RUNPATH /usr/lib/amber-gtk4 [usr/lib/amber-glycin/libglycin-gtk4-2.so.0]
+
+# Rust objects: the toolchain calls no libc string or memory function that _FORTIFY_SOURCE
+# could wrap, and the language bounds-checks its own.
+amber-glycin: hardening-no-fortify-functions [usr/lib/amber-glycin/libglycin-2.so.0]
+amber-glycin: hardening-no-fortify-functions [usr/lib/amber-glycin/libglycin-gtk4-2.so.0]
+amber-glycin: hardening-no-fortify-functions [usr/lib/amber-glycin/libexec/glycin-loaders/2+/glycin-image-rs]
+amber-glycin: hardening-no-fortify-functions [usr/lib/amber-glycin/libexec/glycin-loaders/2+/glycin-svg]
+
+# Misspellings inside statically linked crates' strings, not ours to fix.
+amber-glycin: spelling-error-in-binary * [usr/lib/amber-glycin/libglycin-2.so.0]
+amber-glycin: spelling-error-in-binary * [usr/lib/amber-glycin/libexec/glycin-loaders/2+/glycin-image-rs]
+
+# Not a Debian upload; there is no bug tracker entry to close.
+amber-glycin: initial-upload-closes-no-bugs

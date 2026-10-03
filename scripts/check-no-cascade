@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Assert the bundled glycin resolves against the distro's stock stack, and amber-gtk4, and
+# nothing else.
+#
+# A glycin that wants a newer glib, librsvg or libheif than Mint ships would mean bundling
+# those too, which is a different project. This script enforces that constraint on every
+# build, for the libraries and for each loader.
+#
+# Passes when every library the bundle needs resolves to a file some dpkg package owns.
+# That is the precise statement of "stock": a hand-built glib sitting in /usr/local, or a
+# second bundle's directory on the path, is owned by nothing and fails here.
+#
+# The first argument is libglycin-2.so.0, the one the named-library check at the end is
+# made on. Every further argument (libglycin-gtk4, the loaders) gets the generic checks.
+#
+#   scripts/check-no-cascade build/glycin/stage/usr/lib/amber-glycin/libglycin-2.so.0 \
+#       build/glycin/stage/usr/lib/amber-glycin/libglycin-gtk4-2.so.0 <loader>...
+set -uo pipefail
+
+[ $# -ge 1 ] || { echo "usage: check-no-cascade <libglycin-2.so.0> [<elf>...]" >&2; exit 1; }
+LIB=$1
+for f in "$@"; do
+	[ -e "$f" ] || { echo "check-no-cascade: no such file: $f" >&2; exit 1; }
+done
+
+# The bundle's own directory is not a foreign dependency. Resolve it so a sibling .so
+# in the same prefix is not mistaken for one.
+BUNDLE_DIR=$(cd "$(dirname "$(readlink -f "$LIB")")" && pwd)
+
+fail=0
+note() { printf '  %s\n' "$1"; }
+
+out=""
+for f in "$@"; do
+	one=$(ldd "$f" 2>/dev/null) || { echo "check-no-cascade: ldd failed on $f" >&2; exit 1; }
+	out="$out$one"$'\n'
+done
+libout=$(ldd "$LIB" 2>/dev/null)
+
+# 1. Nothing unresolved. A "not found" here is a bundle that will not start.
+if missing=$(grep "not found" <<<"$out"); then
+	echo "UNRESOLVED — the bundle is missing libraries:"
+	note "$missing"
+	fail=1
+fi
+
+# 2. Every resolved dependency is a distro file.
+unowned=""
+foreign=""
+while read -r _ _ path _; do
+	case "$path" in
+	""|"("*) continue ;;                       # vdso and the loader line
+	esac
+	[ -e "$path" ] || continue
+	real=$(readlink -f "$path")
+	case "$real" in
+	"$BUNDLE_DIR"/*) continue ;;               # our own prefix
+	esac
+	if ! dpkg -S "$real" >/dev/null 2>&1; then
+		# A symlink dpkg does not track can still point at a file it does.
+		if ! dpkg -S "$path" >/dev/null 2>&1; then
+			unowned="$unowned$path -> $real"$'\n'
+			continue
+		fi
+	fi
+	case "$real" in
+	/usr/local/*|/opt/*|"$HOME"/*) foreign="$foreign$path -> $real"$'\n' ;;
+	esac
+done <<<"$out"
+
+if [ -n "$unowned" ]; then
+	echo "CASCADE — these are not distro packages:"
+	note "${unowned%$'\n'}"
+	echo "  The bundle may only depend on the stock stack. Bundling what these provide is"
+	echo "  the cascade this project exists to avoid — pick a glycin version, or a loader set,"
+	echo "  that does not need them (see the Makefile's LOADERS)."
+	fail=1
+fi
+if [ -n "$foreign" ]; then
+	echo "CASCADE — these resolve outside the distro's prefixes:"
+	note "${foreign%$'\n'}"
+	fail=1
+fi
+
+# 3. The libraries the version cascade turns on, named explicitly so the failure
+#    says which one moved rather than leaving it to be inferred from a path list.
+for soname in libglib-2.0.so.0 libgio-2.0.so.0 libseccomp.so.2; do
+	line=$(grep -F "$soname =>" <<<"$libout" | head -1)
+	if [ -z "$line" ]; then
+		echo "MISSING — libglycin does not link $soname at all; has the build changed?"
+		fail=1
+		continue
+	fi
+	path=$(awk '{print $3}' <<<"$line")
+	if ! dpkg -S "$(readlink -f "$path")" >/dev/null 2>&1 && ! dpkg -S "$path" >/dev/null 2>&1; then
+		echo "CASCADE — $soname resolves to $path, which no package owns"
+		fail=1
+	fi
+done
+
+if [ "$fail" -ne 0 ]; then
+	exit 1
+fi
+
+n=$(grep "=>" <<<"$out" | awk '{print $1}' | sort -u | wc -l)
+echo "no-cascade OK — $# objects, $n distinct dependencies, all from distro packages"

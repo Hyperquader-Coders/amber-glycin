@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Decode real images through the staged libglycin and loaders, the way an application will.
+#
+# Nothing is installed: the loader configs are copied with their Exec= rewritten from the
+# install directory to the staged one, GLYCIN_DATA_DIR points at the copy, and a small C
+# program is linked against the staged libraries. The loaders run in glycin's bubblewrap
+# sandbox. If the host forbids bubblewrap (an unprivileged user namespace is refused, as it
+# is in some containers) the script says so and stops, unless SMOKE_NO_SANDBOX=1, which
+# sets glycin's own GLYCIN_DISABLE_SANDBOX and reports that the run was unsandboxed.
+#
+# The GTK part makes a GdkTexture, which needs a display, so it runs on a private Xvfb
+# (xvfb-run -a) with WAYLAND_DISPLAY unset, and against the GTK 4.16 stage that
+# libglycin-gtk4 was built for. It is skipped, and said to be, when xvfb-run is missing.
+#
+#   scripts/smoke build/glycin/stage/usr/lib/amber-glycin /usr/lib/amber-glycin <gtk-stage>
+set -uo pipefail
+
+BUNDLE=${1:?usage: smoke <bundle-dir> <install-dir> <gtk-stage>}
+INSTALL=${2:?usage: smoke <bundle-dir> <install-dir> <gtk-stage>}
+GTK_STAGE=${3:?usage: smoke <bundle-dir> <install-dir> <gtk-stage>}
+
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+BUNDLE=$(cd "$BUNDLE" && pwd)
+GTK_LIB=$(cd "$GTK_STAGE" && pwd)/usr/lib/amber-gtk4
+INCLUDE=$(cd "$BUNDLE/../../.." && pwd)/usr/include
+WORK="$REPO/build/smoke"
+
+rm -rf "$WORK"
+mkdir -p "$WORK/data/glycin-loaders/2+/conf.d"
+
+# glycin finds its loaders through these configs; the staged ones name /usr/lib/amber-glycin.
+for conf in "$BUNDLE"/share/glycin-loaders/2+/conf.d/*.conf; do
+	sed "s|^Exec *= *$INSTALL|Exec=$BUNDLE|" "$conf" > "$WORK/data/glycin-loaders/2+/conf.d/$(basename "$conf")"
+done
+
+# Test images, made here: a 3x2 PNG with six distinct pixels, and a JPEG of the same if
+# ImageMagick is there. The PNG's pixels are checked exactly.
+python3 - "$WORK/px.png" <<'PY' || exit 1
+import struct, sys, zlib
+px = [[(255, 0, 0), (0, 255, 0), (0, 0, 255)], [(255, 255, 0), (0, 255, 255), (255, 0, 255)]]
+raw = b"".join(b"\0" + b"".join(bytes(p) for p in row) for row in px)
+def chunk(t, d):
+    c = struct.pack(">I", len(d)) + t + d
+    return c + struct.pack(">I", zlib.crc32(t + d))
+png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 3, 2, 8, 2, 0, 0, 0)) \
+    + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+open(sys.argv[1], "wb").write(png)
+PY
+# An SVG too, so the second loader and librsvg are exercised.
+cat > "$WORK/box.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" width="8" height="4"><rect width="8" height="4" fill="#336699"/></svg>
+SVG
+files=("$WORK/px.png" "$WORK/box.svg")
+if command -v convert >/dev/null && convert -size 16x8 gradient:red-blue "$WORK/grad.jpg" 2>/dev/null; then
+	files+=("$WORK/grad.jpg")
+else
+	echo "smoke: ImageMagick not found; JPEG not tested"
+fi
+
+cat > "$WORK/smoke.c" <<'C'
+#include <glycin.h>
+#include <stdio.h>
+#include <string.h>
+#ifdef WITH_GTK
+#include <glycin-gtk4.h>
+#include <gtk/gtk.h>
+#endif
+
+int main(int argc, char **argv) {
+	int fails = 0;
+	for (int i = 1; i < argc; i++) {
+		GError *err = NULL;
+		GFile *file = g_file_new_for_path(argv[i]);
+		GlyLoader *loader = gly_loader_new(file);
+		GlyImage *image = gly_loader_load(loader, &err);
+		GlyFrame *frame = image ? gly_image_next_frame(image, &err) : NULL;
+		if (!frame) {
+			printf("FAIL %s: %s\n", argv[i], err ? err->message : "no frame");
+			fails++;
+			continue;
+		}
+		guint w = gly_frame_get_width(frame), h = gly_frame_get_height(frame);
+		guint stride = gly_frame_get_stride(frame);
+		GBytes *bytes = gly_frame_get_buf_bytes(frame);
+		gsize n = 0;
+		const guint8 *p = g_bytes_get_data(bytes, &n);
+		printf("OK   %s: %s %ux%u format=%d stride=%u bytes=%zu first=%02x%02x%02x\n", argv[i],
+		       gly_image_get_mime_type(image), w, h, (int)gly_frame_get_memory_format(frame), stride,
+		       n, p[0], p[1], p[2]);
+		if (strstr(argv[i], "px.png")) {
+			/* r8g8b8 row-major: the six pixels of the fixture, exactly. */
+			static const guint8 want[2][3][3] = {{{255,0,0},{0,255,0},{0,0,255}}, {{255,255,0},{0,255,255},{255,0,255}}};
+			GlyMemoryFormat mf = gly_frame_get_memory_format(frame);
+			guint bpp = mf == GLY_MEMORY_R8G8B8 ? 3 : 4; /* the PNG decodes to RGB8 or RGBA8 */
+			if (w != 3 || h != 2) { printf("FAIL %s: size\n", argv[i]); fails++; }
+			else for (guint y = 0; y < 2; y++) for (guint x = 0; x < 3; x++)
+				if (memcmp(p + y * stride + x * bpp, want[y][x], 3)) {
+					printf("FAIL %s: pixel %u,%u differs\n", argv[i], x, y);
+					fails++;
+				}
+		}
+#ifdef WITH_GTK
+		if (gtk_init_check()) {
+			GdkTexture *tex = gly_gtk_frame_get_texture(frame);
+			printf("OK   %s: GdkTexture %dx%d via libglycin-gtk4\n", argv[i],
+			       gdk_texture_get_width(tex), gdk_texture_get_height(tex));
+			g_object_unref(tex);
+		} else {
+			printf("SKIP %s: no display for the GdkTexture step\n", argv[i]);
+		}
+#endif
+	}
+	return fails ? 1 : 0;
+}
+C
+
+CFLAGS_GLIB=$(pkg-config --cflags gio-2.0)
+LIBS_GLIB=$(pkg-config --libs gio-2.0)
+gcc -o "$WORK/smoke-core" "$WORK/smoke.c" -I"$INCLUDE/glycin-2" $CFLAGS_GLIB \
+	-L"$BUNDLE" -l:libglycin-2.so.0 -Wl,-rpath,"$BUNDLE" $LIBS_GLIB || exit 1
+
+export GLYCIN_DATA_DIR="$WORK/data"
+unset WAYLAND_DISPLAY
+
+# bubblewrap first, on its own: a refusal here is the host, not the bundle.
+if ! bwrap --ro-bind / / --unshare-all --die-with-parent true 2>"$WORK/bwrap.err"; then
+	echo "smoke: bubblewrap cannot run here: $(head -1 "$WORK/bwrap.err")"
+	if [ "${SMOKE_NO_SANDBOX:-}" = 1 ]; then
+		export GLYCIN_DISABLE_SANDBOX=i-know-the-risks
+		echo "smoke: continuing UNSANDBOXED (SMOKE_NO_SANDBOX=1)"
+	else
+		echo "smoke: not run. SMOKE_NO_SANDBOX=1 decodes without the sandbox."
+		exit 1
+	fi
+else
+	echo "smoke: bubblewrap works; loaders run sandboxed"
+fi
+
+echo "== libglycin-2 (no display)"
+env -u DISPLAY "$WORK/smoke-core" "${files[@]}" || exit 1
+
+if command -v xvfb-run >/dev/null; then
+	GTK_CFLAGS=$(PKG_CONFIG_LIBDIR="$REPO/build/glycin/gtk4-pc:$(pkg-config --variable=pc_path pkg-config)" pkg-config --cflags gtk4)
+	GTK_LIBS=$(PKG_CONFIG_LIBDIR="$REPO/build/glycin/gtk4-pc:$(pkg-config --variable=pc_path pkg-config)" pkg-config --libs gtk4)
+	# shellcheck disable=SC2086
+	gcc -DWITH_GTK -o "$WORK/smoke-gtk" "$WORK/smoke.c" -I"$INCLUDE/glycin-2" -I"$INCLUDE/glycin-gtk4-2" $GTK_CFLAGS $CFLAGS_GLIB \
+		-L"$BUNDLE" -l:libglycin-2.so.0 -l:libglycin-gtk4-2.so.0 -Wl,-rpath,"$BUNDLE" \
+		-Wl,-rpath,"$GTK_LIB" $GTK_LIBS $LIBS_GLIB || exit 1
+	echo "== libglycin-gtk4-2 (private Xvfb, WAYLAND_DISPLAY unset)"
+	xvfb-run -a env -u WAYLAND_DISPLAY "$WORK/smoke-gtk" "${files[@]}" || exit 1
+else
+	echo "smoke: xvfb-run not installed; the GdkTexture step was skipped"
+fi
+echo "smoke OK"

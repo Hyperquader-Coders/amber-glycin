@@ -1,0 +1,80 @@
+# `make ci` is the whole gate for this repo, so the runner runs the same steps:
+# the bundle resolves against the stock stack, carries no build paths, finds its loaders,
+# and packages.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The jobs only read the repository.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same list as `make deps`, less shellcheck, which the runner image already has
+      # for `make lint`. rustc and cargo come with the runner image too (rustup, stable);
+      # glycin 2.2 wants 1.93, so the next step moves the toolchain to stable.
+      - name: C libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build pkg-config gcc-14 dpkg-dev binutils lintian \
+            libglib2.0-dev libseccomp-dev libfontconfig-dev librsvg2-dev libcairo2-dev \
+            libgdk-pixbuf-2.0-dev libgtk-4-1 bubblewrap gettext xvfb \
+            sassc gperf libpango1.0-dev libgraphene-1.0-dev libepoxy-dev libxkbcommon-dev \
+            libwayland-dev libx11-dev libxi-dev libxcursor-dev libxdamage-dev libxinerama-dev \
+            libxrandr-dev libxext-dev libxfixes-dev libcairo-script-interpreter2 libjpeg-dev \
+            libtiff-dev libharfbuzz-dev libfribidi-dev libdrm-dev
+
+      - name: Rust toolchain
+        run: |
+          rustup update stable
+          rustup default stable
+          cargo --version
+
+      # libglycin-gtk4 builds against GTK 4.16 headers, which noble does not have; there is
+      # no amber-gtk4 checkout on the runner, so `make gtk-sdk` builds the stage from the
+      # same tarball. It only changes when GTK_VERSION does, so it is cached against that.
+      - name: GTK version
+        id: gtk
+        run: echo "v=$(sed -n 's/^GTK_VERSION *= *//p' Makefile)" >> "$GITHUB_OUTPUT"
+
+      - name: cache the GTK stage
+        id: gtk-cache
+        uses: actions/cache@v4
+        with:
+          path: build/gtk-sdk/stage
+          key: gtk-sdk-${{ steps.gtk.outputs.v }}-${{ runner.os }}
+
+      - name: build GTK
+        if: steps.gtk-cache.outputs.cache-hit != 'true'
+        run: make gtk-sdk
+
+      # `make glycin` fetches and builds glycin; the staged result only changes when VERSION
+      # or the patches do, so it is cached against both.
+      - name: glycin version
+        id: glycin
+        run: echo "v=$(sed -n 's/^VERSION *= *//p' Makefile)" >> "$GITHUB_OUTPUT"
+
+      - name: cache the bundle
+        id: glycin-cache
+        uses: actions/cache@v4
+        with:
+          path: build/glycin/stage
+          key: glycin-${{ steps.glycin.outputs.v }}-${{ steps.gtk.outputs.v }}-${{ hashFiles('patches/*.patch') }}-${{ runner.os }}
+
+      - name: build glycin
+        if: steps.glycin-cache.outputs.cache-hit != 'true'
+        run: make glycin
+
+      - name: ci
+        run: make ci

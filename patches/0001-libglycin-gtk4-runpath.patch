@@ -1,0 +1,22 @@
+libglycin-gtk4: set a RUNPATH of $ORIGIN and the amber-gtk4 bundle
+
+Upstream links libglycin-gtk4 with no RUNPATH. The Rust cdylib then resolves its NEEDED
+libglycin-2.so.0 and libgtk-4.so.1 only through the loader's default search, which finds
+neither the sibling library in /usr/lib/amber-glycin nor GTK 4.16 in /usr/lib/amber-gtk4:
+it would load the distro's GTK 4.14, which lacks gdk_memory_texture_builder_*.
+
+Measured: `readelf -d libglycin-gtk4-2.so.0 | grep -E 'RPATH|RUNPATH'` is empty before and
+names both directories after.
+
+--- a/libglycin/libglycin-gtk4/build.rs
++++ b/libglycin/libglycin-gtk4/build.rs
+@@ -39,5 +39,9 @@
+         _ => {}
+     }
+ 
++    // Amber: RUNPATH, so the library finds libglycin-2 beside it and GTK in the
++    // amber-gtk4 bundle (as amber-vte does) rather than the distro's older one.
++    println!("cargo:rustc-cdylib-link-arg=-Wl,-rpath,$ORIGIN:/usr/lib/amber-gtk4");
++
+     system_deps::Config::new().probe().unwrap();
+ }

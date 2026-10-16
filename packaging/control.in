@@ -1,0 +1,23 @@
+Package: amber-glycin
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Andre Bremer <hyperquader@gmail.com>
+Installed-Size: @SIZE@
+Depends: @DEPS@, bubblewrap, amber-gtk4 (>= @GTK_MIN@)
+Section: libs
+Priority: optional
+Homepage: https://github.com/Hyperquader-Coders/amber-glycin
+Description: glycin image-loading runtime bundle for the amber suite
+ One glycin build shared by the amber applications, installed to
+ /usr/lib/amber-glycin and reached only through those applications'
+ RUNPATH. It is deliberately not on the ldconfig path, so installing it
+ cannot change what anything else on the system links against.
+ .
+ glycin decodes images in sandboxed loader processes (bubblewrap and
+ seccomp) and hands the pixels back through a memfd. The package holds
+ libglycin-2, libglycin-gtk4-2, and the 2+ loaders with their config.
+ Linux Mint ships only the 1+ loaders and no libglycin. Applications set
+ GLYCIN_DATA_DIR to /usr/lib/amber-glycin/share before the first load.
+ .
+ This is a runtime bundle, not a development package. Headers and
+ pkg-config files are not shipped.

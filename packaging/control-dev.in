@@ -1,0 +1,19 @@
+Package: amber-glycin-dev
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Andre Bremer <hyperquader@gmail.com>
+Installed-Size: @SIZE@
+Depends: amber-glycin (= @VERSION@), amber-gtk4-dev (>= @GTK_MIN@), libglib2.0-dev, libfontconfig-dev, libseccomp-dev
+Section: libdevel
+Priority: optional
+Homepage: https://github.com/Hyperquader-Coders/amber-glycin
+Description: glycin development files for the amber suite's bundle
+ The headers, pkg-config files and unversioned library links of the
+ amber-glycin bundle (libglycin-2 and libglycin-gtk4-2), all under
+ /usr/lib/amber-glycin. The suite's Odin binding is generated from these
+ headers.
+ .
+ Build with PKG_CONFIG_PATH set to
+ /usr/lib/amber-glycin/pkgconfig:/usr/lib/amber-gtk4/pkgconfig, give the
+ program the RUNPATH /usr/lib/amber-glycin:/usr/lib/amber-gtk4, and set
+ GLYCIN_DATA_DIR to /usr/lib/amber-glycin/share before the first load.

@@ -1,0 +1,97 @@
+# `make ci` is the gate for a push: the bundle resolves against the stock stack, carries no
+# build paths, finds its loaders, and packages; lintian reads both packages; the shell scripts,
+# the packaging metadata and the agent-file guard check out. Unlike amber-webkit's, it builds:
+# glycin is about 5 minutes, and the GTK stage and the staged bundle are cached. libglycin-gtk4
+# compiles against amber-gtk4's GTK 4.16, so amber-gtk4 is cloned as a sibling and its stage
+# built and cached first.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The job only reads the repository.
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # The desk's layout: each root siblings.txt uses, under the desk's name, in the folder
+    # above the workspace. house-rules is private and not cloned here, so make ci says it
+    # skips the house's two checks.
+    env:
+      AMBER_ROOT: ${{ github.workspace }}/../amber
+    steps:
+      - uses: actions/checkout@v5
+
+      # siblings.txt is the one list; amber-gtk4 is public and needs no token.
+      - name: siblings
+        run: make init-siblings
+
+      # rustc and cargo come with the runner image (rustup, stable); glycin 2.2 wants 1.93, so
+      # this moves the toolchain to stable.
+      - name: Rust toolchain
+        run: |
+          rustup update stable
+          rustup default stable
+          cargo --version
+
+      # The packages are the Makefile's DEPS list, which holds what amber-gtk4's GTK build needs.
+      - name: system packages
+        run: sudo apt-get update && make init-packages APT_FLAGS=-y
+
+      # actions/cache takes no path with a `..` in it, and AMBER_ROOT has one, so the GTK
+      # stage's cache path is under this resolved copy of it.
+      - name: Amber root
+        id: root
+        run: echo "amber=$(realpath -m "$AMBER_ROOT")" >> "$GITHUB_OUTPUT"
+
+      # libglycin-gtk4 builds against GTK 4.16 headers, which noble does not have: `make gtk` in
+      # amber-gtk4 builds the stage. It changes only with amber-gtk4's VERSION, its patches or
+      # its Makefile, so it is cached against all three; amber-gtk4 is beside the workspace,
+      # where hashFiles does not reach, so the key hashes them here. The stage is needed by
+      # make ci as well (check-pc resolves the packaged .pc files' gtk4 in it), so it is restored
+      # every run.
+      - name: GTK version
+        id: gtk
+        run: |
+          gtk="$AMBER_ROOT/amber-gtk4"
+          v=$(sed -n 's/^VERSION *= *//p' "$gtk/Makefile")
+          p=$(cat "$gtk"/patches/*.patch | sha256sum | cut -c1-16)
+          m=$(sha256sum < "$gtk/Makefile" | cut -c1-16)
+          echo "v=$v-$p-$m" >> "$GITHUB_OUTPUT"
+
+      - name: cache the GTK stage
+        id: gtk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.root.outputs.amber }}/amber-gtk4/build/gtk/stage
+          key: gtk-${{ steps.gtk.outputs.v }}-${{ runner.os }}
+
+      - name: build GTK
+        if: steps.gtk-cache.outputs.cache-hit != 'true'
+        run: make -C "$AMBER_ROOT/amber-gtk4" gtk
+
+      # `make glycin` fetches and builds glycin; the staged result only changes when VERSION,
+      # the patches or the GTK stage do, so it is cached against all three.
+      - name: glycin version
+        id: glycin
+        run: echo "v=$(sed -n 's/^VERSION *= *//p' Makefile)" >> "$GITHUB_OUTPUT"
+
+      - name: cache the bundle
+        id: glycin-cache
+        uses: actions/cache@v4
+        with:
+          path: build/glycin/stage
+          key: glycin-${{ steps.glycin.outputs.v }}-${{ steps.gtk.outputs.v }}-${{ hashFiles('patches/*.patch') }}-${{ runner.os }}
+
+      - name: build glycin
+        if: steps.glycin-cache.outputs.cache-hit != 'true'
+        run: make glycin
+
+      - name: make ci
+        run: make ci

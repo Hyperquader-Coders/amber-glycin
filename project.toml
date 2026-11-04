@@ -1,0 +1,76 @@
+# What amber-glycin is and needs: build is what the bundle's build needs, test what only its
+# checks need. house-rules docs/PROJECT_TOML.md has the layout.
+[project]
+schema = "amber-project-1"
+name = "amber-glycin"
+kind = "bundle"
+summary = "glycin 2.2 runtime bundle for the Amber Linux applications"
+tags = [
+  "ai-assisted",
+  "amber",
+  "amberlinux",
+  "debian-packaging",
+  "glycin",
+  "linux-mint",
+]
+license = "MPL-2.0 OR LGPL-2.1-or-later"
+
+[siblings.AMBER_ROOT]
+# Its staged build holds the GTK 4.16 headers libglycin-gtk4 compiles against.
+amber-gtk4 = "https://github.com/Hyperquader-Coders/amber-gtk4"
+
+[build]
+# curl fetches the release; dpkg-dev is for dpkg-shlibdeps and binutils for the strip. rustc and
+# cargo are not apt's: they come from rustup.
+packages = [
+  "meson",
+  "ninja-build",
+  "pkg-config",
+  "curl",
+  "dpkg-dev",
+  "binutils",
+  "gettext",
+  "libglib2.0-dev",
+  "libseccomp-dev",
+  "libfontconfig-dev",
+  "librsvg2-dev",
+  "libcairo2-dev",
+  "libgdk-pixbuf-2.0-dev",
+]
+
+[test]
+# libgtk-4-1 is the stock GTK check-no-cascade resolves libglycin-gtk4 against where amber-gtk4
+# is not installed; bubblewrap and xvfb are for the smoke test.
+packages = [
+  "libgtk-4-1",
+  "bubblewrap",
+  "xvfb",
+  "shellcheck",
+  "shfmt",
+  "lintian",
+]
+
+[bundle]
+version = "2.2.1"
+# The sum GNOME publishes beside the release.
+source = "https://download.gnome.org/sources/glycin/2.2/glycin-2.2.1.tar.xz"
+sha256 = "937ae571d76c0de5e59db944d1194981360be37ee97875729781bc3816ddeafe"
+build-system = "meson"
+# libexec and data under the bundle too, so the loader configs name /usr/lib/amber-glycin. The
+# libraries and the image-rs and SVG loaders, no thumbnailer, bindings, docs or tests:
+# glycin-heif needs libheif 1.20 and glycin-jxl libjxl 0.11.1, which Ubuntu noble does not ship,
+# and bundling those is the cascade scripts/check-no-cascade refuses (MoSCoW.md).
+options = [
+  "libexecdir=lib/amber-glycin/libexec",
+  "datadir=lib/amber-glycin/share",
+  "glycin-loaders=true",
+  "loaders=glycin-image-rs,glycin-svg",
+  "libglycin=true",
+  "libglycin-gtk4=true",
+  "glycin-thumbnailer=false",
+  "introspection=false",
+  "vapi=false",
+  "capi_docs=false",
+  "tests=false",
+  "python_tests=false",
+]

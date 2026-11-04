@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Drop the thumbnailer entries from the stage.
+#
+# meson installs the loaders' .thumbnailer entries even with glycin-thumbnailer off; they name
+# /usr/bin/glycin-thumbnailer, which the bundle does not build, so they are not shipped.
+#
+#   scripts/after-stage build/stage /usr/lib/amber-glycin
+set -euo pipefail
+
+STAGE=${1:?usage: after-stage <stage> <install-dir>}
+INSTALL_DIR=${2:?usage: after-stage <stage> <install-dir>}
+
+rm -rf "$STAGE$INSTALL_DIR/share/thumbnailers"
+echo "after-stage: no thumbnailer entries in $STAGE$INSTALL_DIR/share"

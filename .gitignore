@@ -1,0 +1,16 @@
+/build/
+/dist/
+/out/
+# A checkout of a sibling somewhere else, per machine (AMBER_GTK4_DIR = ...).
+/local.mk
+
+# Agent files are local and are not shared.
+.claude/
+.mcp.json
+.codex/
+AGENTS.md
+CLAUDE.md
+
+# Claude config dirs, if a session ever materialises one here.
+.claude-amber/
+.credentials.json

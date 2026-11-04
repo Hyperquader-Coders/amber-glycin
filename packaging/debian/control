@@ -1,0 +1,54 @@
+Source: amber-glycin
+Section: libs
+Priority: optional
+Maintainer: Andre Bremer <hyperquader@gmail.com>
+Build-Depends: binutils,
+               curl,
+               dpkg-dev,
+               gettext,
+               libcairo2-dev,
+               libfontconfig-dev,
+               libgdk-pixbuf-2.0-dev,
+               libglib2.0-dev,
+               librsvg2-dev,
+               libseccomp-dev,
+               meson,
+               ninja-build,
+               pkg-config,
+               bubblewrap <!nocheck>,
+               libgtk-4-1 <!nocheck>,
+               lintian <!nocheck>,
+               shellcheck <!nocheck>,
+               shfmt <!nocheck>,
+               xvfb <!nocheck>
+Homepage: https://github.com/Hyperquader-Coders/amber-glycin
+
+Package: amber-glycin
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, bubblewrap, amber-gtk4 (>= 4.16.13)
+Description: glycin image-loading runtime bundle for the amber suite
+ One glycin build shared by the amber applications, installed to
+ /usr/lib/amber-glycin and reached only through those applications'
+ RUNPATH. It is deliberately not on the ldconfig path, so installing it
+ cannot change what anything else on the system links against.
+ .
+ glycin decodes images in sandboxed loader processes (bubblewrap and
+ seccomp) and hands the pixels back through a memfd. The package holds
+ libglycin-2, libglycin-gtk4-2, and the 2+ loaders with their config.
+ Linux Mint ships only the 1+ loaders and no libglycin. Applications set
+ GLYCIN_DATA_DIR to /usr/lib/amber-glycin/share before the first load.
+
+Package: amber-glycin-dev
+Section: libdevel
+Architecture: amd64
+Depends: amber-glycin (= ${binary:Version}), amber-gtk4-dev (>= 4.16.13), libglib2.0-dev, libfontconfig-dev, libseccomp-dev
+Description: glycin development files for the amber suite's bundle
+ The headers, pkg-config files and unversioned library links of the
+ amber-glycin bundle (libglycin-2 and libglycin-gtk4-2), all under
+ /usr/lib/amber-glycin. The suite's Odin binding is generated from these
+ headers.
+ .
+ Build with PKG_CONFIG_PATH set to
+ /usr/lib/amber-glycin/pkgconfig:/usr/lib/amber-gtk4/pkgconfig, give the
+ program the RUNPATH /usr/lib/amber-glycin:/usr/lib/amber-gtk4, and set
+ GLYCIN_DATA_DIR to /usr/lib/amber-glycin/share before the first load.
